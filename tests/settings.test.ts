@@ -94,6 +94,10 @@ describe('Profile runtime version authority', () => {
       workspace: defaults.workspace,
       launchExecutable: defaults.launchExecutable,
     })
+    const repaired = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>
+    expect(repaired.dshHome).toBe(defaults.dshHome)
+    expect(repaired.workspace).toBe(defaults.workspace)
+    expect(repaired.launchExecutable).toBe(defaults.launchExecutable)
   })
 
   it('migrates single-entry file picker arrays to their path values', async () => {
@@ -120,6 +124,10 @@ describe('Profile runtime version authority', () => {
       workspace: selectedWorkspace,
       launchExecutable: 'npx.cmd',
     })
+    const repaired = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>
+    expect(repaired.dshHome).toBe(selectedHome)
+    expect(repaired.workspace).toBe(selectedWorkspace)
+    expect(repaired.launchExecutable).toBe('npx.cmd')
   })
 
   it('does not create Profile directories or metadata during settings reads', async () => {

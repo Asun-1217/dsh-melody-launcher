@@ -37,9 +37,31 @@ export function isDshCorePackage(packageName: string): boolean {
   return /^@deepseek-ai\//.test(packageName) || packageName === 'cordis' || /^@cordisjs\//.test(packageName)
 }
 
+function runtimeValueType(value: unknown): string {
+  if (Array.isArray(value)) return `数组（${value.length} 项）`
+  if (value === null) return 'null'
+  return typeof value
+}
+
 function profilePaths(dshHome: string, profileName: string) {
+  // Settings and Profile manifests are persisted JSON and may outlive an
+  // older launcher. Validate at the boundary before any path API receives a
+  // value from disk, so a malformed array produces an actionable error rather
+  // than Node's generic ERR_INVALID_ARG_TYPE from path.join().
+  if (typeof dshHome !== 'string' || !path.isAbsolute(dshHome)) {
+    throw new TypeError(`DSH_HOME 配置无效：需要绝对路径，当前是${runtimeValueType(dshHome)}。请在启动设置中重新选择 DSH_HOME。`)
+  }
+  if (typeof profileName !== 'string' || !isSafeProfileName(profileName)) {
+    throw new TypeError(`Profile 配置无效：需要安全的 Profile 名称，当前是${runtimeValueType(profileName)}。请在启动设置中重新选择 Profile。`)
+  }
   const profileDir = path.join(dshHome, 'profiles', profileName)
   return { profileDir, manifestPath: path.join(profileDir, 'package.json') }
+}
+
+function profileBundleNames(manifest: PackageManifest): string[] {
+  const bundles = manifest.dsh?.profile?.bundles
+  if (!Array.isArray(bundles)) return []
+  return bundles.filter((bundle): bundle is string => typeof bundle === 'string' && isSafePackageName(bundle))
 }
 
 function repositoryUrl(manifest: PackageManifest): string | undefined {
@@ -188,9 +210,7 @@ async function collectPluginInventory(
     if (!entry.isDirectory() || !isSafeProfileName(entry.name)) continue
     const profileManifest = await readJson<PackageManifest>(path.join(profilesRoot, entry.name, 'package.json'))
     if (!profileManifest) continue
-    for (const bundle of profileManifest.dsh?.profile?.bundles ?? []) {
-      if (isSafePackageName(bundle)) names.add(bundle)
-    }
+    for (const bundle of profileBundleNames(profileManifest)) names.add(bundle)
     for (const [name, specifier] of dependencyEntries(profileManifest)) {
       names.add(name)
       // The current Profile wins, followed by the first deterministic sibling.
@@ -315,7 +335,7 @@ export async function readProfile(dshHome: string, profileName: string, pluginRe
     }
   }
 
-  const profileBundles = [...(manifest.dsh?.profile?.bundles ?? [])]
+  const profileBundles = profileBundleNames(manifest)
   let receipts: Awaited<ReturnType<typeof readPluginReceipts>> = []
   if (pluginReceiptsPath) {
     try {

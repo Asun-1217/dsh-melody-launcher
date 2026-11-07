@@ -116,6 +116,25 @@ export async function resolveLocalPluginBodies(dshHome: string, plugins: PackPlu
   return result
 }
 
+function describeRuntimeValue(value: unknown): string {
+  if (Array.isArray(value)) return `数组（${value.length} 项）`
+  if (value === null) return 'null'
+  return typeof value
+}
+
+function profileReadSelection(settings: AppSettings): { dshHome: string; profileName: string } {
+  const raw = settings as unknown as Record<string, unknown>
+  const dshHome = raw.dshHome
+  const profileName = raw.profileName
+  if (typeof dshHome !== 'string' || !path.isAbsolute(dshHome)) {
+    throw new TypeError(`Profile 读取失败：DSH_HOME 必须是绝对路径，当前是${describeRuntimeValue(dshHome)}。请在启动设置中重新选择 DSH_HOME。`)
+  }
+  if (typeof profileName !== 'string' || !isSafeProfileName(profileName)) {
+    throw new TypeError(`Profile 读取失败：Profile 名称必须是字符串，当前是${describeRuntimeValue(profileName)}。请在启动设置中重新选择 Profile。`)
+  }
+  return { dshHome, profileName }
+}
+
 export function registerIpcHandlers(deps: IpcDependencies): void {
   const { settings, pluginReceiptsPath, launcherAssetsUserData, runtime, installer, launcherUpdater, pluginTrial, aiInstaller, copilot, packManager, githubAuth, applicationAddons, catalogSync, dshMarket, recommendedWebUi, runtimeVersions, profiles, nonstandardPack, apiProbe, installQueue, deepSeekBalance, dshUsageService, newsCachePath, skillsShIndexPath } = deps
   const linkedComponents = createLinkedComponentController({
@@ -286,7 +305,8 @@ export function registerIpcHandlers(deps: IpcDependencies): void {
 
   ipcMain.handle(IPC.profileRead, async () => {
     const current = await settings.read()
-    return readProfile(current.dshHome, current.profileName, pluginReceiptsPath)
+    const selection = profileReadSelection(current)
+    return readProfile(selection.dshHome, selection.profileName, pluginReceiptsPath)
   })
   ipcMain.handle(IPC.profilesList, () => profiles.list())
   ipcMain.handle(IPC.profilesCreate, async (_event, request) => {

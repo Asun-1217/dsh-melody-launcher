@@ -117,6 +117,14 @@ function register(deps: ReturnType<typeof dependencies>) {
 }
 
 describe('Profile compatibility IPC', () => {
+  it('reports malformed runtime selection before profile path resolution', async () => {
+    const deps = dependencies()
+    deps.settings.read = vi.fn(async () => ({ dshHome: [directory], profileName: 'web' } as unknown as Awaited<ReturnType<typeof deps.settings.read>>))
+    const invoke = register(deps)
+    await expect(invoke(IPC.profileRead)).rejects.toThrow('DSH_HOME 必须是绝对路径')
+    expect(mocks.readProfile).not.toHaveBeenCalled()
+  })
+
   it.each([IPC.profilesImport, IPC.profilesRepositoryImport])('downloads imported runtimes without selecting them through %s', async channel => {
     const deps = dependencies()
     mocks.loadManifest.mockResolvedValue({

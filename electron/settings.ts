@@ -212,6 +212,50 @@ export function mergeStoredSettings(defaults: AppSettings, stored: Partial<AppSe
 }
 
 /**
+ * Settings are read before the renderer can offer a repair action. Keep the
+ * value returned to the main process strictly path-safe even when defaults
+ * came from a legacy/environment adapter with an unexpected runtime shape.
+ * This is deliberately separate from validateSettings(), which is intended
+ * for user edits and rejects rather than repairs invalid input.
+ */
+function normalizeRuntimeSettings(value: AppSettings, defaults: AppSettings): AppSettings {
+  const dshInstallPath = safeStoredAbsolutePath((value as unknown as Record<string, unknown>).dshInstallPath, defaults.dshInstallPath)
+  const dshHome = safeStoredAbsolutePath((value as unknown as Record<string, unknown>).dshHome, defaults.dshHome)
+  const workspace = safeStoredAbsolutePath((value as unknown as Record<string, unknown>).workspace, defaults.workspace)
+  const launchExecutable = safeStoredCommand((value as unknown as Record<string, unknown>).launchExecutable, defaults.launchExecutable)
+  const profileName = typeof value.profileName === 'string' && isSafeProfileName(value.profileName)
+    ? value.profileName
+    : defaults.profileName
+  const launchArgs = Array.isArray(value.launchArgs) && value.launchArgs.every(item => typeof item === 'string')
+    ? value.launchArgs
+    : defaults.launchArgs
+  return {
+    ...value,
+    dshInstallPath,
+    dshHome,
+    workspace,
+    launchExecutable,
+    profileName,
+    launchArgs,
+    activePackId: null,
+  }
+}
+
+function hasMalformedStoredSettings(stored: Partial<AppSettings>): boolean {
+  const raw = stored as unknown as Record<string, unknown>
+  const pathNeedsRepair = (value: unknown): boolean => {
+    if (value === undefined) return false
+    if (Array.isArray(value)) return true
+    return typeof value !== 'string' || !path.isAbsolute(value)
+  }
+  if (pathNeedsRepair(raw.dshInstallPath) || pathNeedsRepair(raw.dshHome) || pathNeedsRepair(raw.workspace)) return true
+  if (raw.launchExecutable !== undefined && (Array.isArray(raw.launchExecutable) || typeof raw.launchExecutable !== 'string' || !raw.launchExecutable.trim())) return true
+  if (raw.profileName !== undefined && (typeof raw.profileName !== 'string' || !isSafeProfileName(raw.profileName))) return true
+  if (raw.launchArgs !== undefined && (!Array.isArray(raw.launchArgs) || raw.launchArgs.some(value => typeof value !== 'string'))) return true
+  return false
+}
+
+/**
  * 判断当前配置是否走「用 npx 临时拉取 DSH」的方式。
  * 是的话说明还没绑定到某个具体安装，可以在检测到本地 DSH 后自动切换过去。
  */
@@ -289,7 +333,8 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
   async function read(): Promise<AppSettings> {
     if (cache) {
       const profileVersion = await profileDshVersion(cache)
-      cache = await projectRuntime(profileVersion === undefined ? cache : { ...cache, dshVersion: profileVersion })
+      const refreshed = await projectRuntime(profileVersion === undefined ? cache : { ...cache, dshVersion: profileVersion })
+      cache = normalizeRuntimeSettings(refreshed, options.createDefaults())
       return cache
     }
     if (pendingRead) return pendingRead
@@ -304,7 +349,14 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       let loaded = mergeStoredSettings(defaults, stored)
       const profileVersion = await profileDshVersion(loaded)
       if (profileVersion !== undefined) loaded = { ...loaded, dshVersion: profileVersion }
-      cache = await projectRuntime(loaded, true)
+      cache = normalizeRuntimeSettings(await projectRuntime(loaded, true), defaults)
+      // Persist the repair so a subsequent process cannot reintroduce the
+      // malformed path values. Keep this best-effort: a read must still work
+      // when the settings directory is temporarily read-only.
+      if (stored && hasMalformedStoredSettings(stored)) {
+        await mkdir(path.dirname(options.filePath), { recursive: true }).catch(() => undefined)
+        await writeFile(options.filePath, `${JSON.stringify(cache, null, 2)}\n`, 'utf8').catch(() => undefined)
+      }
       return cache
     })()
     pendingRead = load

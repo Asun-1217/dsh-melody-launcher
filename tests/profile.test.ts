@@ -69,6 +69,30 @@ afterEach(async () => {
 })
 
 describe('profile management', () => {
+  it('rejects an array DSH_HOME before any path API is called', async () => {
+    await expect(readProfile([temporaryHome] as unknown as string, profileName)).rejects.toThrow('DSH_HOME 配置无效')
+  })
+
+  it('rejects an array Profile name before any path API is called', async () => {
+    await expect(readProfile(temporaryHome, [profileName] as unknown as string)).rejects.toThrow('Profile 配置无效')
+  })
+
+  it('filters malformed bundle entries from persisted Profile manifests', async () => {
+    await seedProfile()
+    const manifestPath = path.join(temporaryHome, 'profiles', profileName, 'package.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, any>
+    manifest.dsh.profile.bundles = [
+      '@deepseek-ai/dsh-base',
+      ['@demo/vision'],
+      '@demo/vision',
+      42,
+    ]
+    await writeFile(manifestPath, JSON.stringify(manifest), 'utf8')
+
+    const state = await readProfile(temporaryHome, profileName)
+    expect(state.activeBundles).toEqual(['@deepseek-ai/dsh-base', '@demo/vision'])
+  })
+
   it('reads active and inactive bundles from the official profile manifest', async () => {
     await seedProfile()
     const state = await readProfile(temporaryHome, profileName)
